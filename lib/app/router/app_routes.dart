@@ -1,0 +1,29 @@
+/// Named routes. Auth guards are intentionally not implemented yet.
+abstract final class AppRoutes {
+  static const home = '/';
+  static const login = '/login';
+  static const register = '/register';
+  static const conversation = '/conversation';
+  static const settings = '/settings';
+  static const editProfile = '/edit-profile';
+  static const deleteAccount = '/delete-account';
+  static const newChat = '/new-chat';
+  static const newGroup = '/new-group';
+  static const newChannel = '/new-channel';
+  static const chatDetails = '/chat-details';
+  static const roomAdmin = '/room-admin';
+  static const globalSearch = '/search';
+  static const discoverChannels = '/discover-channels';
+  static const privacy = '/privacy';
+  static const sessions = '/sessions';
+  static const bots = '/bots';
+  static const callHistory = '/calls';
+  static const call = '/call';
+  static const username = '/username';
+  static const encryption = '/encryption';
+  static const security = '/security';
+  static const about = '/about';
+  static const storage = '/storage';
+  static const backup = '/backup';
+  static const restoreBackup = '/restore-backup';
+}
