@@ -425,6 +425,12 @@ final class HttpChatDataSource implements ChatDataSource {
       await _rememberPlaintext(message.id, body, ciphertext: outbound);
       _removeMessage(conversationId, localId);
       _upsertMessage(message, countUnread: false);
+      final flush = onOutboxFlush;
+      if (flush != null && _currentUserId.isNotEmpty) {
+        try {
+          await flush(_currentUserId);
+        } catch (_) {}
+      }
       return message;
     } catch (error) {
       final acked = _ackedOutgoing(conversationId, pending);
@@ -701,9 +707,6 @@ final class HttpChatDataSource implements ChatDataSource {
       var progressed = false;
       for (var i = 0; i < items.length; i++) {
         if (!isE2eDecryptPlaceholder(items[i])) {
-          continue;
-        }
-        if (models[i].senderId == _currentUserId) {
           continue;
         }
         final again = await _hydrateMessage(models[i]);
@@ -1524,9 +1527,12 @@ final class HttpChatDataSource implements ChatDataSource {
   Future<void> Function(String userId)? onKeysPublished;
 
   /// Invoked after the local plaintext outbox is persisted (own E2E messages).
-  /// Used to upload an encrypted key+outbox backup so reinstall can show
-  /// previously sent messages.
+  /// Used to schedule an encrypted key+outbox backup upload.
   Future<void> Function(String userId)? onOutboxUpdated;
+
+  /// Awaited after a successful E2E send so cloud backup includes that outbox
+  /// entry before the user can uninstall.
+  Future<void> Function(String userId)? onOutboxFlush;
 
   /// Reinstall Signal state from secure storage after a backup restore.
   Future<void> restoreAfterBackup(String userId) async {

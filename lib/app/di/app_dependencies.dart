@@ -278,6 +278,9 @@ abstract final class AppDependencies {
       httpChat.onOutboxUpdated = (userId) {
         return backupService.tryUploadWithStoredSecret(userId);
       };
+      httpChat.onOutboxFlush = (userId) {
+        return backupService.flushUploadWithStoredSecret(userId);
+      };
     }
   }
 

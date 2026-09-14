@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:seyra/core/crypto/key_backup_service.dart';
 import 'package:seyra/core/errors/result.dart';
 import 'package:seyra/core/network/api_client.dart';
 import 'package:seyra/core/storage/memory_secure_storage.dart';
@@ -741,6 +742,115 @@ void main() {
     expect(
       adaSource.peekMessages('cht_1').where((item) => item.body == 'thanks'),
       isEmpty,
+    );
+  });
+
+  test('reinstall restore: 10+10 each way stays readable for both users', () async {
+    final hub = _E2eHub();
+    final adaStorage = MemorySecureStorage();
+    final linStorage = MemorySecureStorage();
+    await adaStorage.write(key: AuthSecureStorageKeys.accessToken, value: 'ada');
+    await linStorage.write(key: AuthSecureStorageKeys.accessToken, value: 'lin');
+
+    var adaSource = HttpChatDataSource(
+      apiClient: _E2eApiClient(hub, 'usr_ada'),
+      secureStorage: adaStorage,
+      authRemote: _FakeAuthRemote(),
+      baseUrl: Uri.parse('http://127.0.0.1:8080'),
+      realtime: _FakeRealtime(),
+    );
+    var linSource = HttpChatDataSource(
+      apiClient: _E2eApiClient(hub, 'usr_lin'),
+      secureStorage: linStorage,
+      authRemote: _FakeAuthRemote()
+        ..id = 'usr_lin'
+        ..username = 'lin',
+      baseUrl: Uri.parse('http://127.0.0.1:8080'),
+      realtime: _FakeRealtime(),
+    );
+
+    await adaSource.watchConversations().first;
+    await linSource.watchConversations().first;
+    await adaSource.watchMessages('cht_1').first;
+    await linSource.watchMessages('cht_1').first;
+
+    for (var i = 0; i < 10; i++) {
+      await adaSource.sendMessage(conversationId: 'cht_1', body: 'a-pre-$i');
+      await linSource.sendMessage(conversationId: 'cht_1', body: 'l-pre-$i');
+    }
+
+    void expectNoDecryptFailures(List<ChatMessage> items, String who) {
+      final bad = items
+          .where((item) => isE2eDecryptPlaceholder(item) || item.decryptErrorCode != null)
+          .map((item) => '${item.id}:${item.body}:${item.decryptErrorCode}')
+          .toList();
+      expect(bad, isEmpty, reason: '$who has undecryptable messages: $bad');
+    }
+
+    expectNoDecryptFailures(adaSource.peekMessages('cht_1'), 'ada-pre');
+    expectNoDecryptFailures(
+      await linSource.watchMessages('cht_1').first,
+      'lin-pre',
+    );
+
+    // Simulate cloud key+outbox backup, then wipe device storage (reinstall).
+    final adaBackup = await KeyBackupService(adaStorage).exportPackage('usr_ada');
+    final linBackup = await KeyBackupService(linStorage).exportPackage('usr_lin');
+
+    final adaFresh = MemorySecureStorage();
+    final linFresh = MemorySecureStorage();
+    await adaFresh.write(key: AuthSecureStorageKeys.accessToken, value: 'ada');
+    await linFresh.write(key: AuthSecureStorageKeys.accessToken, value: 'lin');
+    await KeyBackupService(adaFresh).importPackage(
+      userId: 'usr_ada',
+      package: adaBackup,
+    );
+    await KeyBackupService(linFresh).importPackage(
+      userId: 'usr_lin',
+      package: linBackup,
+    );
+
+    adaSource = HttpChatDataSource(
+      apiClient: _E2eApiClient(hub, 'usr_ada'),
+      secureStorage: adaFresh,
+      authRemote: _FakeAuthRemote(),
+      baseUrl: Uri.parse('http://127.0.0.1:8080'),
+      realtime: _FakeRealtime(),
+    );
+    linSource = HttpChatDataSource(
+      apiClient: _E2eApiClient(hub, 'usr_lin'),
+      secureStorage: linFresh,
+      authRemote: _FakeAuthRemote()
+        ..id = 'usr_lin'
+        ..username = 'lin',
+      baseUrl: Uri.parse('http://127.0.0.1:8080'),
+      realtime: _FakeRealtime(),
+    );
+
+    await adaSource.restoreAfterBackup('usr_ada');
+    await linSource.restoreAfterBackup('usr_lin');
+
+    final adaHistory = await adaSource.watchMessages('cht_1').first;
+    final linHistory = await linSource.watchMessages('cht_1').first;
+    expectNoDecryptFailures(adaHistory, 'ada-after-reinstall');
+    expectNoDecryptFailures(linHistory, 'lin-after-reinstall');
+    expect(adaHistory.where((item) => item.body.startsWith('a-pre-')).length, 10);
+    expect(adaHistory.where((item) => item.body.startsWith('l-pre-')).length, 10);
+    expect(linHistory.where((item) => item.body.startsWith('a-pre-')).length, 10);
+    expect(linHistory.where((item) => item.body.startsWith('l-pre-')).length, 10);
+
+    for (var i = 0; i < 10; i++) {
+      await adaSource.sendMessage(conversationId: 'cht_1', body: 'a-post-$i');
+      await linSource.sendMessage(conversationId: 'cht_1', body: 'l-post-$i');
+    }
+
+    expectNoDecryptFailures(
+      await adaSource.watchMessages('cht_1').first,
+      'ada-post',
+    );
+    expectNoDecryptFailures(
+      await linSource.watchMessages('cht_1').first,
+      'lin-post',
     );
   });
 

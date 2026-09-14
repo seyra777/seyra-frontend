@@ -85,16 +85,26 @@ final class BackupService {
   }
 
   /// Background upload using the secret remembered at login (same device).
-  /// Debounced so rapid sends still keep the outbox in cloud backup without
-  /// flooding `/v1/backup`.
+  /// Debounced so rapid hydrates do not flood `/v1/backup`.
   Future<void> tryUploadWithStoredSecret(String userId) async {
     if (userId.isEmpty) {
       return;
     }
     _uploadDebounce?.cancel();
-    _uploadDebounce = Timer(const Duration(seconds: 2), () {
+    _uploadDebounce = Timer(const Duration(milliseconds: 500), () {
       unawaited(_uploadWithStoredSecretNow(userId));
     });
+  }
+
+  /// Cancel debounce and upload now — call after a successful send so the
+  /// outbox is in cloud backup before the user can uninstall.
+  Future<void> flushUploadWithStoredSecret(String userId) async {
+    if (userId.isEmpty) {
+      return;
+    }
+    _uploadDebounce?.cancel();
+    _uploadDebounce = null;
+    await _uploadWithStoredSecretNow(userId);
   }
 
   Future<void> _uploadWithStoredSecretNow(String userId) async {
