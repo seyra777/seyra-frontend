@@ -271,7 +271,11 @@ abstract final class AppDependencies {
           : null,
     );
     if (httpMode && chatDataSource is HttpChatDataSource) {
-      (chatDataSource as HttpChatDataSource).onKeysPublished = (userId) {
+      final httpChat = chatDataSource as HttpChatDataSource;
+      httpChat.onKeysPublished = (userId) {
+        return backupService.tryUploadWithStoredSecret(userId);
+      };
+      httpChat.onOutboxUpdated = (userId) {
         return backupService.tryUploadWithStoredSecret(userId);
       };
     }

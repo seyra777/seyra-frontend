@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:seyra/core/crypto/backup_crypto.dart';
@@ -25,6 +26,9 @@ final class BackupService {
   final BackupApiService _api;
   final SecureStorage _storage;
   final BackupRestoreCallback? onRestored;
+  Timer? _uploadDebounce;
+  var _uploadInFlight = false;
+  var _uploadAgain = false;
 
   /// Derive a backup passphrase from the account password (never uploaded).
   static String accountPassphrase({
@@ -81,8 +85,21 @@ final class BackupService {
   }
 
   /// Background upload using the secret remembered at login (same device).
+  /// Debounced so rapid sends still keep the outbox in cloud backup without
+  /// flooding `/v1/backup`.
   Future<void> tryUploadWithStoredSecret(String userId) async {
     if (userId.isEmpty) {
+      return;
+    }
+    _uploadDebounce?.cancel();
+    _uploadDebounce = Timer(const Duration(seconds: 2), () {
+      unawaited(_uploadWithStoredSecretNow(userId));
+    });
+  }
+
+  Future<void> _uploadWithStoredSecretNow(String userId) async {
+    if (_uploadInFlight) {
+      _uploadAgain = true;
       return;
     }
     if (!await _keyBackup.hasLocalKeys(userId)) {
@@ -92,9 +109,17 @@ final class BackupService {
     if (secret == null || secret.isEmpty) {
       return;
     }
+    _uploadInFlight = true;
     try {
-      await uploadBackup(userId: userId, passphrase: secret);
-    } catch (_) {}
+      do {
+        _uploadAgain = false;
+        try {
+          await uploadBackup(userId: userId, passphrase: secret);
+        } catch (_) {}
+      } while (_uploadAgain);
+    } finally {
+      _uploadInFlight = false;
+    }
   }
 
   Future<DateTime?> uploadBackup({

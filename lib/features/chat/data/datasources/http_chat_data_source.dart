@@ -1342,7 +1342,14 @@ final class HttpChatDataSource implements ChatDataSource {
           : 'seyra.e2e.outbox.$_currentUserId';
 
   Future<void> _loadE2eOutbox() async {
-    final raw = await secureStorage.read(_outboxKey);
+    var raw = await secureStorage.read(_outboxKey);
+    if ((raw == null || raw.isEmpty) && _currentUserId.isNotEmpty) {
+      // Legacy unscoped key from older builds.
+      raw = await secureStorage.read('seyra.e2e.outbox');
+      if (raw != null && raw.isNotEmpty) {
+        await secureStorage.write(key: _outboxKey, value: raw);
+      }
+    }
     if (raw == null || raw.isEmpty) {
       return;
     }
@@ -1368,16 +1375,21 @@ final class HttpChatDataSource implements ChatDataSource {
   Future<void> _persistE2eOutbox() async {
     final ids = Map<String, String>.from(_e2ePlaintext);
     final ciphers = Map<String, String>.from(_e2ePlaintextByCipher);
-    while (ids.length > 400) {
+    while (ids.length > 2000) {
       ids.remove(ids.keys.first);
     }
-    while (ciphers.length > 400) {
+    while (ciphers.length > 2000) {
       ciphers.remove(ciphers.keys.first);
     }
     await secureStorage.write(
       key: _outboxKey,
       value: jsonEncode({'ids': ids, 'ciphers': ciphers}),
     );
+    final notify = onOutboxUpdated;
+    final userId = _currentUserId;
+    if (notify != null && userId.isNotEmpty) {
+      unawaited(notify(userId));
+    }
   }
 
   Future<void> _adoptSessionFromPeerMessages(String conversationId) async {
@@ -1511,13 +1523,25 @@ final class HttpChatDataSource implements ChatDataSource {
   /// Invoked after Signal public keys are published (e.g. auto cloud backup).
   Future<void> Function(String userId)? onKeysPublished;
 
+  /// Invoked after the local plaintext outbox is persisted (own E2E messages).
+  /// Used to upload an encrypted key+outbox backup so reinstall can show
+  /// previously sent messages.
+  Future<void> Function(String userId)? onOutboxUpdated;
+
   /// Reinstall Signal state from secure storage after a backup restore.
   Future<void> restoreAfterBackup(String userId) async {
+    await _realtimeSub?.cancel();
+    _realtimeSub = null;
+    try {
+      await realtime.disconnect();
+    } catch (_) {}
     _e2e = null;
     _keysPublished = false;
     _currentUserId = userId;
+    // Mark started so the next `_ensureStarted` does not `_bindAccount` and
+    // wipe the just-restored in-memory outbox before history loads.
+    _started = true;
     _e2ePlaintext.clear();
-    // Keep ciphertext map only briefly — reload from cloud history next.
     _e2eCiphertext.clear();
     _e2ePlaintextByCipher.clear();
     await _loadE2eOutbox();
@@ -1525,6 +1549,7 @@ final class HttpChatDataSource implements ChatDataSource {
       await publishLocalKeys();
     } catch (_) {}
     await _loadConversations();
+    await _connectRealtime();
     final openIds = _messages.keys.toList();
     for (final id in openIds) {
       try {
